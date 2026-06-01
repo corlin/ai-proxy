@@ -28,7 +28,7 @@
     {
       "binding": "DB",
       "database_name": "floreboard-ai-proxy",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "229d46ab-d0c3-4358-b3e3-953f3780f67c"
     }
   ],
   "queues": {
