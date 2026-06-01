@@ -60,6 +60,12 @@ export function validateImageGenerationRequest(
   if (typeof input.requestId !== "string" || input.requestId.length < 8) {
     throw new HttpError(400, "invalid_request", "A valid requestId is required.");
   }
+  if (typeof input.prompt !== "string" || input.prompt.trim().length < 12) {
+    throw new HttpError(400, "invalid_prompt", "A useful image prompt is required.");
+  }
+  if (input.prompt.length > 4000) {
+    throw new HttpError(400, "invalid_prompt", "Image prompt is too long.");
+  }
   return input;
 }
 

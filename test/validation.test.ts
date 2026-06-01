@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPlanPrompt } from "../src/ai";
-import { validateUploadSlotRequest } from "../src/validation";
+import { validateImageGenerationRequest, validateUploadSlotRequest } from "../src/validation";
 import type { DesignPlanRequest } from "../src/contracts";
 
 describe("validateUploadSlotRequest", () => {
@@ -57,5 +57,17 @@ describe("buildPlanPrompt", () => {
     expect(prompt.user).toContain("Rose");
     expect(prompt.user).not.toContain("apiKey");
     expect(prompt.user).not.toContain("model");
+  });
+});
+
+describe("validateImageGenerationRequest", () => {
+  it("requires a bounded server-side image prompt", () => {
+    const result = validateImageGenerationRequest({
+      tenantId: "store-1",
+      requestId: "request-1",
+      prompt: "A compact garden bouquet with soft morning light.",
+    });
+
+    expect(result.prompt).toContain("garden bouquet");
   });
 });

@@ -53,6 +53,7 @@ export interface UploadSlotRequest {
 export interface ImageGenerationRequest {
   tenantId: string;
   requestId: string;
+  prompt: string;
 }
 
 export interface DesignFlowerItem {
