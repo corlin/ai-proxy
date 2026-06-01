@@ -1,0 +1,69 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "floreboard-ai-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "ENVIRONMENT": "development",
+    "AI_CHAT_MODEL": "qwen-plus",
+    "AI_VISION_MODEL": "qwen-vl-max",
+    "AI_IMAGE_MODEL": "wanx-v1"
+  },
+  "r2_buckets": [
+    {
+      "binding": "REFERENCE_IMAGES",
+      "bucket_name": "floreboard-reference-images"
+    },
+    {
+      "binding": "GENERATED_IMAGES",
+      "bucket_name": "floreboard-generated-images"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "floreboard-ai-proxy",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "AI_JOBS",
+        "queue": "floreboard-ai-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "floreboard-ai-jobs",
+        "max_batch_size": 5,
+        "max_batch_timeout": 10
+      }
+    ]
+  },
+  "env": {
+    "production": {
+      "name": "floreboard-ai-proxy",
+      "vars": {
+        "ENVIRONMENT": "production",
+        "AI_CHAT_MODEL": "qwen-plus",
+        "AI_VISION_MODEL": "qwen-vl-max",
+        "AI_IMAGE_MODEL": "wanx-v1"
+      }
+    },
+    "staging": {
+      "name": "floreboard-ai-proxy-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "AI_CHAT_MODEL": "qwen-plus",
+        "AI_VISION_MODEL": "qwen-vl-max",
+        "AI_IMAGE_MODEL": "wanx-v1"
+      }
+    }
+  }
+}

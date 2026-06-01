@@ -1,0 +1,3 @@
+AI_CHAT_COMPLETIONS_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+AI_PROVIDER_API_KEY=replace-with-local-provider-key
+APP_AUTH_TOKEN=replace-with-local-app-token
