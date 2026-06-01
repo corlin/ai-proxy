@@ -1,5 +1,6 @@
 import type {
   DesignPlanRequest,
+  HealthResponse,
   ImageGenerationRequest,
   QueueJobMessage,
   UploadSlotRequest,
@@ -65,7 +66,11 @@ async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionCo
 
   if (path === "health") {
     requireMethod(request, "GET");
-    return jsonResponse({ ok: true, environment: env.ENVIRONMENT });
+    return jsonResponse({
+      ok: true,
+      service: "floreboard-ai-proxy",
+      environment: env.ENVIRONMENT,
+    } satisfies HealthResponse);
   }
 
   await requireAppAuth(request, env);

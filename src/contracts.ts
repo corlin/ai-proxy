@@ -56,6 +56,12 @@ export interface ImageGenerationRequest {
   prompt: string;
 }
 
+export interface HealthResponse {
+  ok: boolean;
+  service: string;
+  environment?: string;
+}
+
 export interface DesignFlowerItem {
   flowerName: string;
   count: number;
