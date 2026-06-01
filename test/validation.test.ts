@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPlanPrompt } from "../src/ai";
+import { buildPlanPrompt, normalizeProviderApiKey, resolveChatCompletionsUrl } from "../src/ai";
 import { validateImageGenerationRequest, validateUploadSlotRequest } from "../src/validation";
 import type { DesignPlanRequest } from "../src/contracts";
 
@@ -57,6 +57,33 @@ describe("buildPlanPrompt", () => {
     expect(prompt.user).toContain("Rose");
     expect(prompt.user).not.toContain("apiKey");
     expect(prompt.user).not.toContain("model");
+  });
+});
+
+describe("normalizeProviderApiKey", () => {
+  it("accepts pasted bearer and quoted secret values", () => {
+    expect(normalizeProviderApiKey(" Bearer 'sk-test' ")).toBe("sk-test");
+    expect(normalizeProviderApiKey('"sk-test"')).toBe("sk-test");
+    expect(normalizeProviderApiKey("AI_PROVIDER_API_KEY=sk-test")).toBe("sk-test");
+    expect(normalizeProviderApiKey("export DASHSCOPE_API_KEY='sk-test'")).toBe("sk-test");
+    expect(normalizeProviderApiKey("sk-test")).toBe("sk-test");
+  });
+});
+
+describe("resolveChatCompletionsUrl", () => {
+  it("routes Coding Plan keys to the dedicated endpoint", () => {
+    expect(
+      resolveChatCompletionsUrl(
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "sk-sp-test",
+      ),
+    ).toBe("https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions");
+  });
+
+  it("keeps general DashScope keys on the configured endpoint", () => {
+    expect(resolveChatCompletionsUrl("https://example.com/chat/completions", "sk-test")).toBe(
+      "https://example.com/chat/completions",
+    );
   });
 });
 

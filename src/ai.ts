@@ -55,18 +55,20 @@ function formatFlower(flower: FlowerSnapshot): string {
 }
 
 async function callChatCompletion(env: RuntimeEnv, system: string, user: string): Promise<string> {
-  if (!env.AI_PROVIDER_API_KEY) {
+  const apiKey = normalizeProviderApiKey(env.AI_PROVIDER_API_KEY);
+  if (!apiKey) {
     throw new HttpError(503, "service_unavailable", "AI provider is not configured.");
   }
   if (!env.AI_CHAT_COMPLETIONS_URL) {
     throw new HttpError(503, "service_unavailable", "AI chat endpoint is not configured.");
   }
+  const chatCompletionsUrl = resolveChatCompletionsUrl(env.AI_CHAT_COMPLETIONS_URL, apiKey);
 
   const startedAt = Date.now();
-  const response = await fetch(env.AI_CHAT_COMPLETIONS_URL, {
+  const response = await fetch(chatCompletionsUrl, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${env.AI_PROVIDER_API_KEY}`,
+      authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -87,6 +89,9 @@ async function callChatCompletion(env: RuntimeEnv, system: string, user: string)
         event: "provider_error",
         status: response.status,
         latencyMs: Date.now() - startedAt,
+        providerHost: new URL(chatCompletionsUrl).host,
+        apiKeyKind: describeApiKeyKind(apiKey),
+        apiKeyLength: apiKey.length,
         body,
       }),
     );
@@ -99,6 +104,39 @@ async function callChatCompletion(env: RuntimeEnv, system: string, user: string)
     throw new HttpError(502, "generation_failed", "AI response did not include content.");
   }
   return content;
+}
+
+export function normalizeProviderApiKey(value: string | undefined): string {
+  let apiKey = value?.trim() ?? "";
+  apiKey = apiKey.replace(/^export\s+/i, "").trim();
+  const assignment = apiKey.match(/^[A-Z0-9_]*API[A-Z0-9_]*KEY\s*=\s*(.+)$/i);
+  if (assignment?.[1]) {
+    apiKey = assignment[1].trim();
+  }
+  if (apiKey.toLowerCase().startsWith("bearer ")) {
+    apiKey = apiKey.slice("bearer ".length).trim();
+  }
+  if (
+    (apiKey.startsWith('"') && apiKey.endsWith('"')) ||
+    (apiKey.startsWith("'") && apiKey.endsWith("'"))
+  ) {
+    apiKey = apiKey.slice(1, -1).trim();
+  }
+  return apiKey;
+}
+
+export function resolveChatCompletionsUrl(configuredUrl: string, apiKey: string): string {
+  if (apiKey.startsWith("sk-sp-")) {
+    return "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions";
+  }
+  return configuredUrl;
+}
+
+function describeApiKeyKind(apiKey: string): string {
+  if (apiKey.startsWith("sk-sp-")) return "dashscope_coding_plan";
+  if (apiKey.startsWith("sk-")) return "dashscope_general";
+  if (apiKey.startsWith("LTAI")) return "aliyun_access_key_id";
+  return "unknown";
 }
 
 function normalizeDesignResponse(localRequestId: string, text: string): DesignResponse {

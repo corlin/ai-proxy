@@ -10,7 +10,7 @@
   },
   "vars": {
     "ENVIRONMENT": "development",
-    "AI_CHAT_COMPLETIONS_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "AI_CHAT_COMPLETIONS_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
     "AI_CHAT_MODEL": "qwen-plus",
     "AI_VISION_MODEL": "qwen-vl-max",
     "AI_IMAGE_MODEL": "wanx-v1"
@@ -52,7 +52,7 @@
       "name": "floreboard-ai-proxy",
       "vars": {
         "ENVIRONMENT": "production",
-        "AI_CHAT_COMPLETIONS_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "AI_CHAT_COMPLETIONS_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
         "AI_CHAT_MODEL": "qwen-plus",
         "AI_VISION_MODEL": "qwen-vl-max",
         "AI_IMAGE_MODEL": "wanx-v1"
@@ -62,7 +62,7 @@
       "name": "floreboard-ai-proxy-staging",
       "vars": {
         "ENVIRONMENT": "staging",
-        "AI_CHAT_COMPLETIONS_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "AI_CHAT_COMPLETIONS_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
         "AI_CHAT_MODEL": "qwen-plus",
         "AI_VISION_MODEL": "qwen-vl-max",
         "AI_IMAGE_MODEL": "wanx-v1"
