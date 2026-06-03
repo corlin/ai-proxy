@@ -26,3 +26,10 @@ export function requireReferenceImages(env: RuntimeEnv): R2Bucket {
   }
   return env.REFERENCE_IMAGES;
 }
+
+export function requireGeneratedImages(env: RuntimeEnv): R2Bucket {
+  if (!env.GENERATED_IMAGES) {
+    throw new HttpError(503, "service_unavailable", "Generated image storage is not configured.");
+  }
+  return env.GENERATED_IMAGES;
+}

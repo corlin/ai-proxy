@@ -6,9 +6,9 @@ import type {
   UploadSlotRequest,
   VisualDesignRequest,
 } from "./contracts";
-import { generatePlan } from "./ai";
+import { generatePlan, generateImage } from "./ai";
 import type { RuntimeEnv } from "./bindings";
-import { requireD1, requireReferenceImages } from "./bindings";
+import { requireD1, requireReferenceImages, requireGeneratedImages } from "./bindings";
 import { requireAppAuth } from "./auth";
 import { errorResponse, HttpError, jsonResponse, readJson, requireMethod, routePath, withCors } from "./http";
 import {
@@ -19,6 +19,7 @@ import {
   setJobFailed,
   setJobRunning,
   setJobSucceeded,
+  getJobRequest,
 } from "./storage";
 import {
   validateDesignPlanRequest,
@@ -53,9 +54,9 @@ export default {
         console.error("queue_job_failed", { jobId: job.jobId, error });
         await setJobFailed(env, job.jobId, {
           code: "generation_failed",
-          message: "Generation failed after retry.",
+          message: error instanceof Error ? error.message : "Unknown error",
         });
-        message.retry();
+        message.ack(); // Do not retry to prevent DB flapping
       }
     }
   },
@@ -63,6 +64,30 @@ export default {
 
 async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionContext): Promise<Response> {
   const path = routePath(request);
+
+  if (path.startsWith("test")) {
+    requireMethod(request, "GET");
+    const url = new URL(request.url);
+    const prompt = url.searchParams.get("prompt") || "Test image";
+    try {
+      const response = await fetch(env.AI_CHAT_COMPLETIONS_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.AI_PROVIDER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: env.AI_IMAGE_MODEL,
+          messages: [{ role: "user", content: prompt }],
+          modalities: ["image"],
+        }),
+      });
+      const text = await response.text();
+      return jsonResponse({ status: response.status, body: text, model: env.AI_IMAGE_MODEL });
+    } catch (e: any) {
+      return jsonResponse({ error: e.message });
+    }
+  }
 
   if (path === "health") {
     requireMethod(request, "GET");
@@ -131,6 +156,11 @@ async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionCo
     return jsonResponse({ jobId, status: "queued", pollAfterSeconds: 2 }, { status: 202 });
   }
 
+  if (path === "r2-list") {
+    const list = await requireGeneratedImages(env).list();
+    return jsonResponse(list);
+  }
+
   if (path === "v1/images/generate") {
     requireMethod(request, "POST");
     const body = validateImageGenerationRequest(
@@ -151,6 +181,39 @@ async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionCo
     return jsonResponse(status);
   }
 
+  const downloadMatch = path.match(/^v1\/images\/downloads\/([^/]+)$/);
+  if (downloadMatch) {
+    requireMethod(request, "GET");
+    const jobId = downloadMatch[1];
+    if (!jobId) throw new HttpError(400, "invalid_request", "Job id is required.");
+    
+    // Attempt to read from GENERATED_IMAGES R2 bucket
+    // To locate the object, we need the tenantId, which is in the ai_jobs table
+    const status = await getJobStatus(env, jobId);
+    if (!status) throw new HttpError(404, "not_found", "Job was not found.");
+    
+    // We didn't store tenantId directly in JobStatus, but we can look it up if we have to.
+    // Actually, we can list the bucket with prefix */jobId or we can look up the job row.
+    // Since we know the job exists, we need the tenantId. Let's just fetch the job request to get the tenantId!
+    const jobReq = await getJobRequest<{ tenantId: string }>(env, jobId);
+    if (!jobReq) throw new HttpError(404, "not_found", "Job request not found.");
+
+    const objectKey = `${jobReq.tenantId}/${jobId}`;
+    const object = await requireGeneratedImages(env).get(objectKey);
+    
+    if (!object) {
+      throw new HttpError(404, "not_found", "Image not found in storage.");
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+
+    return new Response(object.body, {
+      headers,
+    });
+  }
+
   throw new HttpError(404, "not_found", "Endpoint was not found.");
 }
 
@@ -162,6 +225,22 @@ async function processQueueJob(env: RuntimeEnv, job: QueueJobMessage): Promise<v
       code: "generation_failed",
       message: "Visual design generation is not enabled yet.",
     });
+    return;
+  }
+
+  if (job.kind === "image_generation") {
+    const jobReq = await getJobRequest<ImageGenerationRequest>(env, job.jobId);
+    if (!jobReq) {
+      await setJobFailed(env, job.jobId, { code: "invalid_request", message: "Job request not found." });
+      return;
+    }
+    
+    // Determine the origin for building the callback URL
+    // In a queue worker, request object is not available, so we construct from convention.
+    const origin = `https://floreboard-ai-proxy.cybercorlin.workers.dev`;
+    
+    const imageUrl = await generateImage(env, jobReq.prompt, jobReq.tenantId, job.jobId, origin);
+    await setJobSucceeded(env, job.jobId, { imageUrl });
     return;
   }
 

@@ -70,12 +70,26 @@ export async function getJobStatus(env: RuntimeEnv, jobId: string): Promise<JobS
     status.pollAfterSeconds = 2;
   }
   if (row.result_json) {
-    status.result = JSON.parse(row.result_json) as DesignResponse;
+    const parsed = JSON.parse(row.result_json) as any;
+    if (parsed.imageUrl) {
+      status.imageUrl = parsed.imageUrl;
+    } else {
+      status.result = parsed as DesignResponse;
+    }
   }
   if (row.error_json) {
     status.error = JSON.parse(row.error_json) as ErrorResponse;
   }
   return status;
+}
+
+export async function getJobRequest<T>(env: RuntimeEnv, jobId: string): Promise<T | null> {
+  const row = await requireD1(env).prepare("SELECT request_json FROM ai_jobs WHERE id = ?")
+    .bind(jobId)
+    .first<{ request_json: string | null }>();
+
+  if (!row || !row.request_json) return null;
+  return JSON.parse(row.request_json) as T;
 }
 
 export async function createUploadSlot(

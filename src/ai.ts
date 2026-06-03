@@ -1,6 +1,8 @@
 import type { DesignPlanRequest, DesignResponse, FlowerSnapshot } from "./contracts";
 import type { RuntimeEnv } from "./bindings";
+import { requireGeneratedImages } from "./bindings";
 import { HttpError } from "./http";
+import { Buffer } from "node:buffer";
 
 interface ChatChoice {
   message?: {
@@ -16,6 +18,113 @@ export async function generatePlan(env: RuntimeEnv, input: DesignPlanRequest): P
   const prompt = buildPlanPrompt(input);
   const responseText = await callChatCompletion(env, prompt.system, prompt.user);
   return normalizeDesignResponse(input.request.id, responseText);
+}
+
+export async function generateImage(
+  env: RuntimeEnv,
+  prompt: string,
+  tenantId: string,
+  jobId: string,
+  origin: string,
+): Promise<string> {
+  const apiKey = normalizeProviderApiKey(env.AI_PROVIDER_API_KEY);
+  if (!apiKey) {
+    throw new HttpError(503, "service_unavailable", "AI provider is not configured.");
+  }
+  const chatCompletionsUrl = resolveChatCompletionsUrl(env.AI_CHAT_COMPLETIONS_URL || "https://openrouter.ai/api/v1/chat/completions", apiKey);
+
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout to beat Cloudflare's 30s limit
+
+  try {
+    const response = await fetch(chatCompletionsUrl, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+        "HTTP-Referer": "https://floreboard.cybercorlin.workers.dev",
+        "X-Title": "Floreboard AI Proxy",
+      },
+      body: JSON.stringify({
+        model: env.AI_IMAGE_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        modalities: ["image"],
+      }),
+    });
+    clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    const body = await safeReadSmallText(response);
+    console.error(
+      JSON.stringify({
+        event: "provider_error",
+        status: response.status,
+        latencyMs: Date.now() - startedAt,
+        providerHost: new URL(chatCompletionsUrl).host,
+        apiKeyKind: describeApiKeyKind(apiKey),
+        apiKeyLength: apiKey.length,
+        body,
+      }),
+    );
+    throw new HttpError(502, "generation_failed", `Image generation failed. Status: ${response.status}. Error: ${body.substring(0, 500)}`);
+  }
+
+  const text = await response.text();
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch (err) {
+    throw new HttpError(502, "generation_failed", "JSON parse failed. Status: " + response.status + ". Raw: " + text.substring(0, 500));
+  }
+
+  if (json.error) {
+    throw new HttpError(502, "generation_failed", "OpenRouter Error: " + JSON.stringify(json.error));
+  }
+
+  const message = json.choices?.[0]?.message;
+  if (!message) {
+    throw new HttpError(502, "generation_failed", "No message in response. Raw: " + text.substring(0, 500));
+  }
+
+  let imageUrl = "";
+  if (message.images && message.images.length > 0) {
+    imageUrl = message.images[0].imageUrl?.url || message.images[0].image_url?.url || message.images[0].url || "";
+  } else if (message.content) {
+    imageUrl = message.content.trim();
+    const markdownMatch = imageUrl.match(/!\[.*?\]\((.*?)\)/);
+    if (markdownMatch?.[1]) {
+      imageUrl = markdownMatch[1];
+    }
+  }
+
+  if (!imageUrl) {
+    throw new HttpError(502, "generation_failed", "No image URL found in response. JSON: " + JSON.stringify(json).substring(0, 500));
+  }
+
+  if (imageUrl.startsWith("data:image/")) {
+    const commaIndex = imageUrl.indexOf(',');
+    if (commaIndex === -1) throw new HttpError(502, "generation_failed", "Invalid data URL returned.");
+    const prefix = imageUrl.substring(0, commaIndex);
+    const contentTypeMatch = prefix.match(/^data:(image\/[a-zA-Z]+);base64$/);
+    const contentType = contentTypeMatch ? contentTypeMatch[1] : "image/png";
+    const base64Data = imageUrl.substring(commaIndex + 1);
+    const bytes = Buffer.from(base64Data, "base64");
+
+    const objectKey = `${tenantId}/${jobId}`;
+    await requireGeneratedImages(env).put(objectKey, bytes, {
+      httpMetadata: { contentType },
+    });
+    
+    return `${origin}/v1/images/downloads/${jobId}`;
+  }
+
+  return imageUrl;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw new HttpError(502, "generation_failed", error instanceof Error ? error.message : "Unknown generation error");
+  }
 }
 
 export function buildPlanPrompt(input: DesignPlanRequest): { system: string; user: string } {
