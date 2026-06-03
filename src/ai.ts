@@ -70,6 +70,8 @@ async function callChatCompletion(env: RuntimeEnv, system: string, user: string)
     headers: {
       authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
+      "HTTP-Referer": "https://floreboard.cybercorlin.workers.dev",
+      "X-Title": "Floreboard AI Proxy",
     },
     body: JSON.stringify({
       model: env.AI_CHAT_MODEL,
@@ -126,15 +128,16 @@ export function normalizeProviderApiKey(value: string | undefined): string {
 }
 
 export function resolveChatCompletionsUrl(configuredUrl: string, apiKey: string): string {
-  if (apiKey.startsWith("sk-sp-")) {
-    return "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions";
+  if (apiKey.startsWith("sk-or-v1-")) {
+    return "https://openrouter.ai/api/v1/chat/completions";
   }
   return configuredUrl;
 }
 
 function describeApiKeyKind(apiKey: string): string {
+  if (apiKey.startsWith("sk-or-v1-")) return "openrouter";
   if (apiKey.startsWith("sk-sp-")) return "dashscope_coding_plan";
-  if (apiKey.startsWith("sk-")) return "dashscope_general";
+  if (apiKey.startsWith("sk-")) return "general_openai_compatible";
   if (apiKey.startsWith("LTAI")) return "aliyun_access_key_id";
   return "unknown";
 }
