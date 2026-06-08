@@ -7,6 +7,7 @@ import type {
   VisualDesignRequest,
 } from "./contracts";
 import { generatePlan, generateImage } from "./ai";
+import { handleAppleWebhook, verifyIAPReceipt, type IAPVerifyRequest } from "./iap";
 import type { RuntimeEnv } from "./bindings";
 import { requireD1, requireReferenceImages, requireGeneratedImages } from "./bindings";
 import { requireAppAuth } from "./auth";
@@ -20,6 +21,8 @@ import {
   setJobRunning,
   setJobSucceeded,
   getJobRequest,
+  getUserWallet,
+  deductCredits,
 } from "./storage";
 import {
   validateDesignPlanRequest,
@@ -69,8 +72,9 @@ async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionCo
     requireMethod(request, "GET");
     const url = new URL(request.url);
     const prompt = url.searchParams.get("prompt") || "Test image";
+    const chatUrl = env.AI_CHAT_COMPLETIONS_URL || "https://openrouter.ai/api/v1/chat/completions";
     try {
-      const response = await fetch(env.AI_CHAT_COMPLETIONS_URL, {
+      const response = await fetch(chatUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${env.AI_PROVIDER_API_KEY}`,
@@ -98,14 +102,103 @@ async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionCo
     } satisfies HealthResponse);
   }
 
+  // Handle Auth Endpoints
+  if (path === "v1/auth/login" || path === "v1/auth/register") {
+    requireMethod(request, "POST");
+    const body = await request.json() as any;
+    const storeName = body.storeName;
+    const password = body.password;
+
+    if (!storeName || !password) {
+      throw new HttpError(400, "invalid_request", "storeName and password are required");
+    }
+
+    // Basic Mock Auth: Use storeName as tenantId. 
+    // In a real system, verify password against a users table.
+    const tenantId = `tenant_${storeName}`;
+    
+    // For registration, optionally initialize user wallet if not exists
+    if (path === "v1/auth/register") {
+      try {
+        await requireD1(env).prepare(
+          `INSERT INTO user_wallets (tenant_id, tier, balance, updated_at) VALUES (?, 'free', 10000, ?)`
+        ).bind(tenantId, Date.now()).run();
+      } catch (e) {
+        // Ignore UNIQUE constraint errors if already registered
+      }
+    }
+
+    return jsonResponse({
+      tokens: {
+        accessToken: `mock_access_token_${tenantId}`,
+        refreshToken: `mock_refresh_token_${tenantId}`,
+        expiresIn: 86400 * 30
+      },
+      tenant: {
+        id: tenantId,
+        name: storeName
+      }
+    });
+  }
+
+  if (path === "v1/auth/refresh") {
+    requireMethod(request, "POST");
+    const body = await request.json() as any;
+    const refreshToken = body.refreshToken;
+    if (!refreshToken) throw new HttpError(400, "invalid_request", "refreshToken is required");
+    
+    return jsonResponse({
+      accessToken: refreshToken.replace("refresh", "access"),
+      refreshToken: refreshToken,
+      expiresIn: 86400 * 30
+    });
+  }
+
   await requireAppAuth(request, env);
 
   if (path === "v1/designs/plan") {
     requireMethod(request, "POST");
     const body = validateDesignPlanRequest(await readJson<DesignPlanRequest>(request, jsonLimitBytes));
-    const result = await generatePlan(env, body);
-    ctx.waitUntil(recordUsage(env, body.tenantId, result.requestId, "plan", "succeeded"));
+    
+    const wallet = await getUserWallet(env, body.tenantId);
+    if (wallet.balance < 500) {
+      throw new HttpError(402, "insufficient_quota", "Insufficient credits for plan generation.");
+    }
+    
+    const { result, tokensUsed } = await generatePlan(env, body);
+    await deductCredits(env, body.tenantId, tokensUsed);
+    ctx.waitUntil(recordUsage(env, body.tenantId, result.requestId, "plan", "succeeded", tokensUsed, tokensUsed));
     return jsonResponse(result);
+  }
+
+  if (path === "v1/users/quota") {
+    requireMethod(request, "GET");
+    const url = new URL(request.url);
+    const tenantId = url.searchParams.get("tenantId");
+    if (!tenantId) throw new HttpError(400, "invalid_request", "tenantId is required");
+    const wallet = await getUserWallet(env, tenantId);
+    return jsonResponse({
+      tenantId: wallet.tenantId,
+      tier: wallet.tier,
+      balance: wallet.balance
+    });
+  }
+
+  if (path === "v1/iap/verify") {
+    requireMethod(request, "POST");
+    const body = await readJson<IAPVerifyRequest>(request, jsonLimitBytes);
+    if (!body.tenantId || !body.transactionId) {
+       throw new HttpError(400, "invalid_request", "tenantId and transactionId are required");
+    }
+    const res = await verifyIAPReceipt(env, body);
+    return jsonResponse({ tenantId: body.tenantId, balance: res.newBalance, tier: res.tier });
+  }
+
+  if (path === "v1/webhooks/apple-iap") {
+    requireMethod(request, "POST");
+    const payload = await request.json();
+    await handleAppleWebhook(env, payload);
+    return new Response("OK", { status: 200 });
   }
 
   if (path === "v1/uploads/reference-image") {
@@ -151,6 +244,10 @@ async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionCo
   if (path === "v1/designs/visual") {
     requireMethod(request, "POST");
     const body = validateVisualDesignRequest(await readJson<VisualDesignRequest>(request, jsonLimitBytes));
+    const wallet = await getUserWallet(env, body.tenantId);
+    if (wallet.balance < 50000) {
+      throw new HttpError(402, "insufficient_quota", "Insufficient credits for visual design generation.");
+    }
     const jobId = crypto.randomUUID();
     await createJob(env, { id: jobId, tenantId: body.tenantId, kind: "visual_design", request: body });
     return jsonResponse({ jobId, status: "queued", pollAfterSeconds: 2 }, { status: 202 });
@@ -166,6 +263,10 @@ async function handleRequest(request: Request, env: RuntimeEnv, ctx: ExecutionCo
     const body = validateImageGenerationRequest(
       await readJson<ImageGenerationRequest>(request, jsonLimitBytes),
     );
+    const wallet = await getUserWallet(env, body.tenantId);
+    if (wallet.balance < 50000) {
+      throw new HttpError(402, "insufficient_quota", "Insufficient credits for image generation.");
+    }
     const jobId = crypto.randomUUID();
     await createJob(env, { id: jobId, tenantId: body.tenantId, kind: "image_generation", request: body });
     return jsonResponse({ jobId, status: "queued", pollAfterSeconds: 2 }, { status: 202 });
@@ -240,6 +341,11 @@ async function processQueueJob(env: RuntimeEnv, job: QueueJobMessage): Promise<v
     const origin = `https://floreboard-ai-proxy.cybercorlin.workers.dev`;
     
     const imageUrl = await generateImage(env, jobReq.prompt, jobReq.tenantId, job.jobId, origin);
+    await deductCredits(env, jobReq.tenantId, 50000);
+    await requireD1(env).prepare(
+      `INSERT INTO usage_events (id, tenant_id, request_id, kind, status, tokens_used, credits_used, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(crypto.randomUUID(), jobReq.tenantId, jobReq.requestId, "image", "succeeded", 0, 50000, Date.now()).run();
+
     await setJobSucceeded(env, job.jobId, { imageUrl });
     return;
   }
@@ -256,12 +362,14 @@ async function recordUsage(
   requestId: string,
   kind: string,
   status: string,
+  tokensUsed: number,
+  creditsUsed: number,
 ): Promise<void> {
   await requireD1(env).prepare(
     `INSERT INTO usage_events
-      (id, tenant_id, request_id, kind, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+      (id, tenant_id, request_id, kind, status, tokens_used, credits_used, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(crypto.randomUUID(), tenantId, requestId, kind, status, Date.now())
+    .bind(crypto.randomUUID(), tenantId, requestId, kind, status, tokensUsed, creditsUsed, Date.now())
     .run();
 }

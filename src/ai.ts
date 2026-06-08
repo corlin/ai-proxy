@@ -2,7 +2,6 @@ import type { DesignPlanRequest, DesignResponse, FlowerSnapshot } from "./contra
 import type { RuntimeEnv } from "./bindings";
 import { requireGeneratedImages } from "./bindings";
 import { HttpError } from "./http";
-import { Buffer } from "node:buffer";
 
 interface ChatChoice {
   message?: {
@@ -12,12 +11,20 @@ interface ChatChoice {
 
 interface ChatResponse {
   choices?: ChatChoice[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
-export async function generatePlan(env: RuntimeEnv, input: DesignPlanRequest): Promise<DesignResponse> {
+export async function generatePlan(env: RuntimeEnv, input: DesignPlanRequest): Promise<{ result: DesignResponse; tokensUsed: number }> {
   const prompt = buildPlanPrompt(input);
-  const responseText = await callChatCompletion(env, prompt.system, prompt.user);
-  return normalizeDesignResponse(input.request.id, responseText);
+  const { content, usage } = await callChatCompletion(env, prompt.system, prompt.user);
+  return {
+    result: normalizeDesignResponse(input.request.id, content),
+    tokensUsed: usage?.total_tokens ?? 0,
+  };
 }
 
 export async function generateImage(
@@ -110,12 +117,18 @@ export async function generateImage(
     const contentTypeMatch = prefix.match(/^data:(image\/[a-zA-Z]+);base64$/);
     const contentType = contentTypeMatch ? contentTypeMatch[1] : "image/png";
     const base64Data = imageUrl.substring(commaIndex + 1);
-    const bytes = Buffer.from(base64Data, "base64");
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
 
     const objectKey = `${tenantId}/${jobId}`;
-    await requireGeneratedImages(env).put(objectKey, bytes, {
-      httpMetadata: { contentType },
-    });
+    const options: R2PutOptions = {};
+    if (contentType) {
+      options.httpMetadata = { contentType };
+    }
+    await requireGeneratedImages(env).put(objectKey, bytes, options);
     
     return `${origin}/v1/images/downloads/${jobId}`;
   }
@@ -163,7 +176,7 @@ function formatFlower(flower: FlowerSnapshot): string {
     .join("; ");
 }
 
-async function callChatCompletion(env: RuntimeEnv, system: string, user: string): Promise<string> {
+async function callChatCompletion(env: RuntimeEnv, system: string, user: string): Promise<{ content: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }> {
   const apiKey = normalizeProviderApiKey(env.AI_PROVIDER_API_KEY);
   if (!apiKey) {
     throw new HttpError(503, "service_unavailable", "AI provider is not configured.");
@@ -214,7 +227,7 @@ async function callChatCompletion(env: RuntimeEnv, system: string, user: string)
   if (!content) {
     throw new HttpError(502, "generation_failed", "AI response did not include content.");
   }
-  return content;
+  return json.usage ? { content, usage: json.usage } : { content };
 }
 
 export function normalizeProviderApiKey(value: string | undefined): string {

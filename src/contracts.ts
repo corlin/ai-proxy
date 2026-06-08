@@ -110,3 +110,18 @@ export interface QueueJobMessage {
   tenantId: string;
   kind: JobKind;
 }
+
+export interface UserWallet {
+  tenantId: string;
+  tier: "free" | "pro";
+  balance: number;
+  appleOriginalTransactionId?: string | null;
+  subscriptionExpiresAt?: number | null;
+  updatedAt: number;
+}
+
+export interface QuotaResponse {
+  tenantId: string;
+  tier: "free" | "pro";
+  balance: number;
+}

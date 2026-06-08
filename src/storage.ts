@@ -142,3 +142,43 @@ export async function getUploadSlot(
     .bind(uploadId)
     .first();
 }
+
+export async function getUserWallet(env: RuntimeEnv, tenantId: string) {
+  const db = requireD1(env);
+  let row = await db.prepare(
+    "SELECT tenant_id as tenantId, tier, balance, apple_original_transaction_id as appleOriginalTransactionId, subscription_expires_at as subscriptionExpiresAt, updated_at as updatedAt FROM user_wallets WHERE tenant_id = ?"
+  )
+    .bind(tenantId)
+    .first<any>();
+
+  if (!row) {
+    // Auto-provision free tier
+    const now = Date.now();
+    await db.prepare(
+      "INSERT INTO user_wallets (tenant_id, tier, balance, updated_at) VALUES (?, 'free', 10000, ?)"
+    )
+      .bind(tenantId, now)
+      .run();
+    row = {
+      tenantId,
+      tier: "free",
+      balance: 10000,
+      appleOriginalTransactionId: null,
+      subscriptionExpiresAt: null,
+      updatedAt: now,
+    };
+  }
+
+  return row;
+}
+
+export async function deductCredits(env: RuntimeEnv, tenantId: string, amount: number): Promise<boolean> {
+  const db = requireD1(env);
+  const result = await db.prepare(
+    "UPDATE user_wallets SET balance = balance - ?, updated_at = ? WHERE tenant_id = ? AND balance >= ?"
+  )
+    .bind(amount, Date.now(), tenantId, amount)
+    .run();
+  
+  return result.meta.changes > 0;
+}

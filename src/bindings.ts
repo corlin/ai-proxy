@@ -1,9 +1,18 @@
 import { HttpError } from "./http";
 
-export type RuntimeEnv = Env & {
+export type RuntimeEnv = {
+  DB: D1Database;
   AI_CHAT_COMPLETIONS_URL?: string;
   AI_PROVIDER_API_KEY?: string;
   APP_AUTH_TOKEN?: string;
+  OPENAI_API_KEY?: string;
+  APPLE_ISSUER_ID?: string;
+  APPLE_KEY_ID?: string;
+  APPLE_PRIVATE_KEY?: string;
+  APPLE_BUNDLE_ID?: string;
+  AI_JOBS?: Queue;
+  REFERENCE_IMAGES?: R2Bucket;
+  GENERATED_IMAGES?: R2Bucket;
 };
 
 export function requireD1(env: RuntimeEnv): D1Database {
