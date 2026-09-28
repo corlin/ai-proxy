@@ -18,6 +18,13 @@
     "AI_VISION_MODEL": "gemini-3.8-flash",
     "AI_IMAGE_MODEL": "gemini-3.1-flash-image"
   },
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "api.floreboard.com",
+      "custom_domain": true
+    }
+  ],
   "r2_buckets": [
     {
       "binding": "REFERENCE_IMAGES",
