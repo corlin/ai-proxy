@@ -13,10 +13,10 @@
   },
   "vars": {
     "ENVIRONMENT": "development",
-    "AI_CHAT_COMPLETIONS_URL": "https://openrouter.ai/api/v1/chat/completions",
-    "AI_CHAT_MODEL": "google/gemini-3.5-flash",
-    "AI_VISION_MODEL": "google/gemini-3.5-flash",
-    "AI_IMAGE_MODEL": "google/gemini-2.5-flash-image"
+    "AI_CHAT_COMPLETIONS_URL": "https://dayan-gemini-proxy.vercel.app/v1beta/openai/chat/completions",
+    "AI_CHAT_MODEL": "gemini-3.8-flash",
+    "AI_VISION_MODEL": "gemini-3.8-flash",
+    "AI_IMAGE_MODEL": "gemini-3.1-flash-image"
   },
   "r2_buckets": [
     {
@@ -55,20 +55,20 @@
       "name": "floreboard-ai-proxy",
       "vars": {
         "ENVIRONMENT": "production",
-        "AI_CHAT_COMPLETIONS_URL": "https://openrouter.ai/api/v1/chat/completions",
-        "AI_CHAT_MODEL": "google/gemini-3.5-flash",
-        "AI_VISION_MODEL": "google/gemini-3.5-flash",
-        "AI_IMAGE_MODEL": "openai/gpt-5.4-image-2"
+        "AI_CHAT_COMPLETIONS_URL": "https://dayan-gemini-proxy.vercel.app/v1beta/openai/chat/completions",
+        "AI_CHAT_MODEL": "gemini-3.8-flash",
+        "AI_VISION_MODEL": "gemini-3.8-flash",
+        "AI_IMAGE_MODEL": "gemini-3.1-flash-image"
       }
     },
     "staging": {
       "name": "floreboard-ai-proxy-staging",
       "vars": {
         "ENVIRONMENT": "staging",
-        "AI_CHAT_COMPLETIONS_URL": "https://openrouter.ai/api/v1/chat/completions",
-        "AI_CHAT_MODEL": "google/gemini-3.5-flash",
-        "AI_VISION_MODEL": "google/gemini-3.5-flash",
-        "AI_IMAGE_MODEL": "openai/gpt-5.4-image-2"
+        "AI_CHAT_COMPLETIONS_URL": "https://dayan-gemini-proxy.vercel.app/v1beta/openai/chat/completions",
+        "AI_CHAT_MODEL": "gemini-3.8-flash",
+        "AI_VISION_MODEL": "gemini-3.8-flash",
+        "AI_IMAGE_MODEL": "gemini-3.1-flash-image"
       }
     }
   }

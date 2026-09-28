@@ -38,13 +38,107 @@ export async function generateImage(
   if (!apiKey) {
     throw new HttpError(503, "service_unavailable", "AI provider is not configured.");
   }
-  const chatCompletionsUrl = resolveChatCompletionsUrl(env.AI_CHAT_COMPLETIONS_URL || "https://openrouter.ai/api/v1/chat/completions", apiKey);
+
+  const isGemini =
+    apiKey.startsWith("AQ.") ||
+    apiKey.startsWith("AIza") ||
+    (env.AI_IMAGE_MODEL && env.AI_IMAGE_MODEL.includes("gemini")) ||
+    (env.AI_CHAT_COMPLETIONS_URL && env.AI_CHAT_COMPLETIONS_URL.includes("gemini-proxy"));
 
   const startedAt = Date.now();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout to beat Cloudflare's 30s limit
 
   try {
+    if (isGemini) {
+      const model = env.AI_IMAGE_MODEL || "gemini-3.1-flash-image";
+      let proxyBase = "https://dayan-gemini-proxy.vercel.app";
+      if (env.AI_CHAT_COMPLETIONS_URL && env.AI_CHAT_COMPLETIONS_URL.startsWith("http")) {
+        try {
+          const parsed = new URL(env.AI_CHAT_COMPLETIONS_URL);
+          proxyBase = `${parsed.protocol}//${parsed.host}`;
+        } catch {
+          // fallback to default
+        }
+      }
+      const geminiImageUrl = `${proxyBase}/v1beta/models/${model}:generateContent`;
+
+      const response = await fetch(geminiImageUrl, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "x-goog-api-key": apiKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: prompt }],
+            },
+          ],
+        }),
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const body = await safeReadSmallText(response);
+        console.error(
+          JSON.stringify({
+            event: "gemini_image_error",
+            status: response.status,
+            latencyMs: Date.now() - startedAt,
+            model,
+            body,
+          }),
+        );
+        throw new HttpError(
+          response.status === 429 ? 429 : 502,
+          "generation_failed",
+          `Gemini image generation failed (HTTP ${response.status}): ${body.substring(0, 300)}`,
+        );
+      }
+
+      const json = (await response.json()) as any;
+      const candidate = json.candidates?.[0];
+      const part = candidate?.content?.parts?.[0];
+
+      let inlineData = part?.inlineData ?? part?.inline_data;
+      if (inlineData?.data) {
+        const mimeType = inlineData.mimeType || inlineData.mime_type || "image/png";
+        const base64Data = inlineData.data;
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        const objectKey = `${tenantId}/${jobId}`;
+        const options: R2PutOptions = {
+          httpMetadata: { contentType: mimeType },
+        };
+        await requireGeneratedImages(env).put(objectKey, bytes, options);
+        return `${origin}/v1/images/downloads/${jobId}`;
+      }
+
+      if (part?.text) {
+        const match = part.text.match(/!\[.*?\]\((.*?)\)/);
+        if (match?.[1]) {
+          return match[1];
+        }
+      }
+
+      throw new HttpError(
+        502,
+        "generation_failed",
+        `Gemini returned unexpected content format: ${JSON.stringify(json).substring(0, 300)}`,
+      );
+    }
+
+    const chatCompletionsUrl = resolveChatCompletionsUrl(
+      env.AI_CHAT_COMPLETIONS_URL || "https://openrouter.ai/api/v1/chat/completions",
+      apiKey,
+    );
+
     const response = await fetch(chatCompletionsUrl, {
       method: "POST",
       signal: controller.signal,
@@ -62,80 +156,96 @@ export async function generateImage(
     });
     clearTimeout(timeoutId);
 
-  if (!response.ok) {
-    const body = await safeReadSmallText(response);
-    console.error(
-      JSON.stringify({
-        event: "provider_error",
-        status: response.status,
-        latencyMs: Date.now() - startedAt,
-        providerHost: new URL(chatCompletionsUrl).host,
-        apiKeyKind: describeApiKeyKind(apiKey),
-        apiKeyLength: apiKey.length,
-        body,
-      }),
-    );
-    throw new HttpError(502, "generation_failed", `Image generation failed. Status: ${response.status}. Error: ${body.substring(0, 500)}`);
-  }
-
-  const text = await response.text();
-  let json: any;
-  try {
-    json = JSON.parse(text);
-  } catch (err) {
-    throw new HttpError(502, "generation_failed", "JSON parse failed. Status: " + response.status + ". Raw: " + text.substring(0, 500));
-  }
-
-  if (json.error) {
-    throw new HttpError(502, "generation_failed", "OpenRouter Error: " + JSON.stringify(json.error));
-  }
-
-  const message = json.choices?.[0]?.message;
-  if (!message) {
-    throw new HttpError(502, "generation_failed", "No message in response. Raw: " + text.substring(0, 500));
-  }
-
-  let imageUrl = "";
-  if (message.images && message.images.length > 0) {
-    imageUrl = message.images[0].imageUrl?.url || message.images[0].image_url?.url || message.images[0].url || "";
-  } else if (message.content) {
-    imageUrl = message.content.trim();
-    const markdownMatch = imageUrl.match(/!\[.*?\]\((.*?)\)/);
-    if (markdownMatch?.[1]) {
-      imageUrl = markdownMatch[1];
-    }
-  }
-
-  if (!imageUrl) {
-    throw new HttpError(502, "generation_failed", "No image URL found in response. JSON: " + JSON.stringify(json).substring(0, 500));
-  }
-
-  if (imageUrl.startsWith("data:image/")) {
-    const commaIndex = imageUrl.indexOf(',');
-    if (commaIndex === -1) throw new HttpError(502, "generation_failed", "Invalid data URL returned.");
-    const prefix = imageUrl.substring(0, commaIndex);
-    const contentTypeMatch = prefix.match(/^data:(image\/[a-zA-Z]+);base64$/);
-    const contentType = contentTypeMatch ? contentTypeMatch[1] : "image/png";
-    const base64Data = imageUrl.substring(commaIndex + 1);
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    if (!response.ok) {
+      const body = await safeReadSmallText(response);
+      console.error(
+        JSON.stringify({
+          event: "provider_error",
+          status: response.status,
+          latencyMs: Date.now() - startedAt,
+          providerHost: new URL(chatCompletionsUrl).host,
+          apiKeyKind: describeApiKeyKind(apiKey),
+          apiKeyLength: apiKey.length,
+          body,
+        }),
+      );
+      throw new HttpError(
+        502,
+        "generation_failed",
+        `Image generation failed. Status: ${response.status}. Error: ${body.substring(0, 500)}`,
+      );
     }
 
-    const objectKey = `${tenantId}/${jobId}`;
-    const options: R2PutOptions = {};
-    if (contentType) {
-      options.httpMetadata = { contentType };
+    const text = await response.text();
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new HttpError(
+        502,
+        "generation_failed",
+        "JSON parse failed. Status: " + response.status + ". Raw: " + text.substring(0, 500),
+      );
     }
-    await requireGeneratedImages(env).put(objectKey, bytes, options);
-    
-    return `${origin}/v1/images/downloads/${jobId}`;
-  }
 
-  return imageUrl;
+    if (json.error) {
+      throw new HttpError(502, "generation_failed", "Provider Error: " + JSON.stringify(json.error));
+    }
+
+    const message = json.choices?.[0]?.message;
+    if (!message) {
+      throw new HttpError(502, "generation_failed", "No message in response. Raw: " + text.substring(0, 500));
+    }
+
+    let imageUrl = "";
+    if (message.images && message.images.length > 0) {
+      imageUrl =
+        message.images[0].imageUrl?.url || message.images[0].image_url?.url || message.images[0].url || "";
+    } else if (message.content) {
+      imageUrl = message.content.trim();
+      const markdownMatch = imageUrl.match(/!\[.*?\]\((.*?)\)/);
+      if (markdownMatch?.[1]) {
+        imageUrl = markdownMatch[1];
+      }
+    }
+
+    if (!imageUrl) {
+      throw new HttpError(
+        502,
+        "generation_failed",
+        "No image URL found in response. JSON: " + JSON.stringify(json).substring(0, 500),
+      );
+    }
+
+    if (imageUrl.startsWith("data:image/")) {
+      const commaIndex = imageUrl.indexOf(",");
+      if (commaIndex === -1) throw new HttpError(502, "generation_failed", "Invalid data URL returned.");
+      const prefix = imageUrl.substring(0, commaIndex);
+      const contentTypeMatch = prefix.match(/^data:(image\/[a-zA-Z]+);base64$/);
+      const contentType = contentTypeMatch ? contentTypeMatch[1] : "image/png";
+      const base64Data = imageUrl.substring(commaIndex + 1);
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      const objectKey = `${tenantId}/${jobId}`;
+      const options: R2PutOptions = {};
+      if (contentType) {
+        options.httpMetadata = { contentType };
+      }
+      await requireGeneratedImages(env).put(objectKey, bytes, options);
+
+      return `${origin}/v1/images/downloads/${jobId}`;
+    }
+
+    return imageUrl;
   } catch (error) {
     clearTimeout(timeoutId);
+    if (error instanceof HttpError) {
+      throw error;
+    }
     throw new HttpError(502, "generation_failed", error instanceof Error ? error.message : "Unknown generation error");
   }
 }
@@ -176,7 +286,11 @@ function formatFlower(flower: FlowerSnapshot): string {
     .join("; ");
 }
 
-async function callChatCompletion(env: RuntimeEnv, system: string, user: string): Promise<{ content: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }> {
+async function callChatCompletion(
+  env: RuntimeEnv,
+  system: string,
+  user: string,
+): Promise<{ content: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }> {
   const apiKey = normalizeProviderApiKey(env.AI_PROVIDER_API_KEY);
   if (!apiKey) {
     throw new HttpError(503, "service_unavailable", "AI provider is not configured.");
@@ -186,48 +300,87 @@ async function callChatCompletion(env: RuntimeEnv, system: string, user: string)
   }
   const chatCompletionsUrl = resolveChatCompletionsUrl(env.AI_CHAT_COMPLETIONS_URL, apiKey);
 
-  const startedAt = Date.now();
-  const response = await fetch(chatCompletionsUrl, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-      "HTTP-Referer": "https://floreboard.cybercorlin.workers.dev",
-      "X-Title": "Floreboard AI Proxy",
-    },
-    body: JSON.stringify({
-      model: env.AI_CHAT_MODEL,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0.6,
-      response_format: { type: "json_object" },
-    }),
-  });
+  const isGemini =
+    apiKey.startsWith("AQ.") ||
+    apiKey.startsWith("AIza") ||
+    chatCompletionsUrl.includes("gemini-proxy") ||
+    chatCompletionsUrl.includes("generativelanguage.googleapis.com");
 
-  if (!response.ok) {
-    const body = await safeReadSmallText(response);
-    console.error(
-      JSON.stringify({
-        event: "provider_error",
-        status: response.status,
-        latencyMs: Date.now() - startedAt,
-        providerHost: new URL(chatCompletionsUrl).host,
-        apiKeyKind: describeApiKeyKind(apiKey),
-        apiKeyLength: apiKey.length,
-        body,
-      }),
-    );
-    throw new HttpError(502, "generation_failed", "AI generation failed.");
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${apiKey}`,
+    "content-type": "application/json",
+    "HTTP-Referer": "https://floreboard.cybercorlin.workers.dev",
+    "X-Title": "Floreboard AI Proxy",
+  };
+  if (isGemini) {
+    headers["x-goog-api-key"] = apiKey;
   }
 
-  const json = (await response.json()) as ChatResponse;
-  const content = json.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new HttpError(502, "generation_failed", "AI response did not include content.");
+  const configuredModel = env.AI_CHAT_MODEL || "gemini-3.8-flash";
+  const modelsToTry = [configuredModel];
+  if (isGemini && configuredModel === "gemini-3.8-flash") {
+    modelsToTry.push("gemini-3.5-flash");
   }
-  return json.usage ? { content, usage: json.usage } : { content };
+
+  let lastError: Error | null = null;
+  for (const model of modelsToTry) {
+    const startedAt = Date.now();
+    try {
+      const response = await fetch(chatCompletionsUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          temperature: 0.6,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await safeReadSmallText(response);
+        console.error(
+          JSON.stringify({
+            event: "provider_error",
+            status: response.status,
+            latencyMs: Date.now() - startedAt,
+            providerHost: new URL(chatCompletionsUrl).host,
+            model,
+            apiKeyKind: describeApiKeyKind(apiKey),
+            apiKeyLength: apiKey.length,
+            body,
+          }),
+        );
+        if (response.status === 503 && model !== modelsToTry[modelsToTry.length - 1]) {
+          console.warn(`Model ${model} returned 503, trying fallback model ${modelsToTry[modelsToTry.length - 1]}`);
+          continue;
+        }
+        throw new HttpError(
+          502,
+          "generation_failed",
+          `AI generation failed (HTTP ${response.status}): ${body.substring(0, 300)}`,
+        );
+      }
+
+      const json = (await response.json()) as ChatResponse;
+      const content = json.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new HttpError(502, "generation_failed", "AI response did not include content.");
+      }
+      return json.usage ? { content, usage: json.usage } : { content };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (err instanceof HttpError && err.status === 503 && model !== modelsToTry[modelsToTry.length - 1]) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError || new HttpError(502, "generation_failed", "AI generation failed.");
 }
 
 export function normalizeProviderApiKey(value: string | undefined): string {
@@ -253,12 +406,21 @@ export function resolveChatCompletionsUrl(configuredUrl: string, apiKey: string)
   if (apiKey.startsWith("sk-or-v1-")) {
     return "https://openrouter.ai/api/v1/chat/completions";
   }
+  if (apiKey.startsWith("sk-sp-")) {
+    return "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions";
+  }
+  if (apiKey.startsWith("AQ.") || apiKey.startsWith("AIza")) {
+    if (!configuredUrl || configuredUrl.includes("openrouter") || configuredUrl.includes("dashscope")) {
+      return "https://dayan-gemini-proxy.vercel.app/v1beta/openai/chat/completions";
+    }
+  }
   return configuredUrl;
 }
 
-function describeApiKeyKind(apiKey: string): string {
+export function describeApiKeyKind(apiKey: string): string {
   if (apiKey.startsWith("sk-or-v1-")) return "openrouter";
   if (apiKey.startsWith("sk-sp-")) return "dashscope_coding_plan";
+  if (apiKey.startsWith("AQ.") || apiKey.startsWith("AIza")) return "google_gemini";
   if (apiKey.startsWith("sk-")) return "general_openai_compatible";
   if (apiKey.startsWith("LTAI")) return "aliyun_access_key_id";
   return "unknown";

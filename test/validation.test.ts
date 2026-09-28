@@ -80,7 +80,25 @@ describe("resolveChatCompletionsUrl", () => {
     ).toBe("https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions");
   });
 
-  it("keeps general DashScope keys on the configured endpoint", () => {
+  it("routes Gemini API keys to the proxy endpoint if openrouter was configured", () => {
+    expect(
+      resolveChatCompletionsUrl(
+        "https://openrouter.ai/api/v1/chat/completions",
+        "AQ.testkey12345",
+      ),
+    ).toBe("https://dayan-gemini-proxy.vercel.app/v1beta/openai/chat/completions");
+  });
+
+  it("keeps explicit Dayan Gemini proxy endpoint", () => {
+    expect(
+      resolveChatCompletionsUrl(
+        "https://dayan-gemini-proxy.vercel.app/v1beta/openai/chat/completions",
+        "AQ.testkey12345",
+      ),
+    ).toBe("https://dayan-gemini-proxy.vercel.app/v1beta/openai/chat/completions");
+  });
+
+  it("keeps general keys on the configured endpoint", () => {
     expect(resolveChatCompletionsUrl("https://example.com/chat/completions", "sk-test")).toBe(
       "https://example.com/chat/completions",
     );
