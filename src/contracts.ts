@@ -20,6 +20,7 @@ export interface DesignRequest {
   formPreference?: string | null;
   backgroundStyle?: string | null;
   visualStyle?: string | null;
+  creativeEffect?: string | null;
 }
 
 export interface FlowerSnapshot {

@@ -254,6 +254,7 @@ export function buildPlanPrompt(input: DesignPlanRequest): { system: string; use
   const inventory = input.inventory.map(formatFlower).join("\n");
   const language = input.language === "zh" ? "Simplified Chinese" : "English";
   const visualStyle = input.request.visualStyle || "default";
+  const creativeEffect = input.request.creativeEffect || "none";
 
   let styleGuidance = "Style: Master florist atelier photography. Warm natural side-lighting, organic arrangement on artisan workbench.";
   if (visualStyle === "editorial_luxury") {
@@ -268,6 +269,31 @@ export function buildPlanPrompt(input: DesignPlanRequest): { system: string; use
     styleGuidance = "Style: Apple-inspired museum exhibition showcase. Seamless pure matte white studio background, sculptural form, clean crisp edges, floating ambient lighting.";
   }
 
+  let effectGuidance = "";
+  if (creativeEffect === "komorebi") {
+    effectGuidance = "[CREATIVE EFFECT]: Ethereal morning mist, soft dappled sunlight filtering through lush canopy (komorebi lighting), dramatic Tyndall volumetric sunbeams, subtle glowing dust motes.";
+  } else if (creativeEffect === "crystal_cloche") {
+    effectGuidance = "[CREATIVE EFFECT]: Encased within an immaculate arched crystal glass bell jar cloche, crisp glass bevel highlights and caustics, pristine miniature sanctuary inside, shallow clear water reflection base.";
+  } else if (creativeEffect === "silk_embroidery") {
+    effectGuidance = "[CREATIVE EFFECT]: Tactile 3D silk embroidery needlework texture, luminous silk thread sheen with raised relief needlework, delicate gold wire filigree accents, heritage textile craftsmanship.";
+  } else if (creativeEffect === "torn_paper") {
+    effectGuidance = "[CREATIVE EFFECT]: Dynamic blooms bursting outward through torn handmade deckle-edge paper fissure, raw fibrous paper tear edges, dramatic multi-layered drop shadow.";
+  } else if (creativeEffect === "floating_dust") {
+    effectGuidance = "[CREATIVE EFFECT]: Zero-gravity suspended petals, delicate drifting golden glitter dust particles catching rim light, ethereal curling wisps of incense smoke.";
+  } else if (creativeEffect === "water_caustics") {
+    effectGuidance = "[CREATIVE EFFECT]: Mesmerizing underwater caustics light patterns dancing across petals, crystal-clear refractive water ripples, glistening fresh water droplet highlights.";
+  }
+
+  const promptRules = [
+    "IMAGE PROMPT RULES (imagePrompt MUST be written in English for high-fidelity rendering):",
+    "Format imagePrompt with modular blocks [SUBJECT & STEMS], [STYLE], [COMPOSITION], [LIGHTING & DEPTH], [VESSEL & BACKDROP], [CREATIVE EFFECT], [CONSTRAINTS].",
+    "1. [SUBJECT & STEMS]: State the exact stem count and flower names from flowerList (e.g. 'Exactly 12 stems in total: 5 Pink Roses, 4 White Lilies... Countable distinct blooms, no extra flowers').",
+    `2. ${styleGuidance}`,
+    ...(effectGuidance ? [`3. ${effectGuidance}`] : []),
+    `${effectGuidance ? "4" : "3"}. [CONSTRAINTS]: 'No artificial plastic flowers, no deformed petals, no blurry stem chaos, no watermark, no CGI oversaturation.'`,
+    "Keep total imagePrompt between 400 and 1200 characters in English.",
+  ];
+
   return {
     system: [
       "You are Floreboard's floristry design engine.",
@@ -278,12 +304,7 @@ export function buildPlanPrompt(input: DesignPlanRequest): { system: string; use
       "Required JSON keys: title, description, meaningText, reasoning, steps, imagePrompt, estimatedCost, flowerList.",
       "flowerList items require flowerName, count, and reason.",
       "",
-      "IMAGE PROMPT RULES (imagePrompt MUST be written in English for high-fidelity rendering):",
-      "Format imagePrompt with modular blocks [SUBJECT & STEMS], [STYLE], [COMPOSITION], [LIGHTING & DEPTH], [VESSEL & BACKDROP], [CONSTRAINTS].",
-      "1. [SUBJECT & STEMS]: State the exact stem count and flower names from flowerList (e.g. 'Exactly 12 stems in total: 5 Pink Roses, 4 White Lilies... Countable distinct blooms, no extra flowers').",
-      `2. ${styleGuidance}`,
-      "3. [CONSTRAINTS]: 'No artificial plastic flowers, no deformed petals, no blurry stem chaos, no watermark, no CGI oversaturation.'",
-      "Keep total imagePrompt between 400 and 1200 characters in English.",
+      ...promptRules,
     ].join("\n"),
     user: [
       `Design request JSON:\n${JSON.stringify(input.request)}`,

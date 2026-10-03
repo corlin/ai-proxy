@@ -93,6 +93,42 @@ describe("buildPlanPrompt", () => {
     const triptychPrompt = buildPlanPrompt(triptychReq);
     expect(triptychPrompt.system).toContain("3-panel vertical layout presentation collage");
   });
+
+  it("injects creative effect guidance into system prompt when specified", () => {
+    const komorebiReq: DesignPlanRequest = {
+      tenantId: "store-1",
+      language: "en",
+      request: {
+        id: "request-4",
+        occasion: "wedding",
+        recipient: "partner",
+        style: "romantic",
+        visualStyle: "oriental_zen",
+        creativeEffect: "komorebi",
+      },
+      inventory: [],
+    };
+    const clocheReq: DesignPlanRequest = {
+      tenantId: "store-1",
+      language: "en",
+      request: {
+        id: "request-5",
+        occasion: "home",
+        recipient: "self",
+        style: "minimalist",
+        visualStyle: "minimalist_gallery",
+        creativeEffect: "crystal_cloche",
+      },
+      inventory: [],
+    };
+
+    const komorebiPrompt = buildPlanPrompt(komorebiReq);
+    expect(komorebiPrompt.system).toContain("[CREATIVE EFFECT]: Ethereal morning mist");
+    expect(komorebiPrompt.system).toContain("komorebi lighting");
+
+    const clochePrompt = buildPlanPrompt(clocheReq);
+    expect(clochePrompt.system).toContain("[CREATIVE EFFECT]: Encased within an immaculate arched crystal glass bell jar cloche");
+  });
 });
 
 describe("normalizeProviderApiKey", () => {
