@@ -19,6 +19,7 @@ export interface DesignRequest {
   moodPreference?: string | null;
   formPreference?: string | null;
   backgroundStyle?: string | null;
+  visualStyle?: string | null;
 }
 
 export interface FlowerSnapshot {

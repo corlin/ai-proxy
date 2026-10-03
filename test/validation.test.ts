@@ -54,9 +54,44 @@ describe("buildPlanPrompt", () => {
     const prompt = buildPlanPrompt(request);
 
     expect(prompt.system).toContain("Return strict JSON only");
+    expect(prompt.system).toContain("IMAGE PROMPT RULES");
     expect(prompt.user).toContain("Rose");
     expect(prompt.user).not.toContain("apiKey");
     expect(prompt.user).not.toContain("model");
+  });
+
+  it("injects specific visual style guidance into system prompt", () => {
+    const luxuryReq: DesignPlanRequest = {
+      tenantId: "store-1",
+      language: "en",
+      request: {
+        id: "request-2",
+        occasion: "wedding",
+        recipient: "partner",
+        style: "romantic",
+        visualStyle: "editorial_luxury",
+      },
+      inventory: [],
+    };
+    const triptychReq: DesignPlanRequest = {
+      tenantId: "store-1",
+      language: "en",
+      request: {
+        id: "request-3",
+        occasion: "opening",
+        recipient: "friend",
+        style: "wild",
+        visualStyle: "spatial_triptych",
+      },
+      inventory: [],
+    };
+
+    const luxuryPrompt = buildPlanPrompt(luxuryReq);
+    expect(luxuryPrompt.system).toContain("Tom Ford/Dior fragrance campaign aesthetic");
+    expect(luxuryPrompt.system).toContain("Nero Marquina marble");
+
+    const triptychPrompt = buildPlanPrompt(triptychReq);
+    expect(triptychPrompt.system).toContain("3-panel vertical layout presentation collage");
   });
 });
 

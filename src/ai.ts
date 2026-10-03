@@ -253,6 +253,20 @@ export async function generateImage(
 export function buildPlanPrompt(input: DesignPlanRequest): { system: string; user: string } {
   const inventory = input.inventory.map(formatFlower).join("\n");
   const language = input.language === "zh" ? "Simplified Chinese" : "English";
+  const visualStyle = input.request.visualStyle || "default";
+
+  let styleGuidance = "Style: Master florist atelier photography. Warm natural side-lighting, organic arrangement on artisan workbench.";
+  if (visualStyle === "editorial_luxury") {
+    styleGuidance = "Style: High-end commercial luxury still life photography (Tom Ford/Dior fragrance campaign aesthetic). Top softbox lighting, delicate micro dewdrops on petals, 85mm f/1.8 lens, Italian Nero Marquina marble or micro-cement tabletop, soft contact shadows.";
+  } else if (visualStyle === "spatial_triptych") {
+    styleGuidance = "Style: 3-panel vertical layout presentation collage. Panel 1 (Top): wide-angle architectural spatial view; Panel 2 (Middle): eye-level arrangement on pedestal; Panel 3 (Bottom): extreme macro close-up of petal texture and dewdrops. Seamless color and lighting harmonization.";
+  } else if (visualStyle === "botanical_atlas") {
+    styleGuidance = "Style: Scientific botanical infographic plate & specimen dissection. Dissected anatomy, clean cream archival parchment background, minimal fine line indicators, NO illegible pseudo-text.";
+  } else if (visualStyle === "oriental_zen") {
+    styleGuidance = "Style: Oriental Zen Wabi-Sabi aesthetic, Song dynasty literati elegance, asymmetric sweeping lines, generous negative space (Ma / 留白), handcrafted coarse dark stoneware vase, shoji screen soft daylight.";
+  } else if (visualStyle === "minimalist_gallery") {
+    styleGuidance = "Style: Apple-inspired museum exhibition showcase. Seamless pure matte white studio background, sculptural form, clean crisp edges, floating ambient lighting.";
+  }
 
   return {
     system: [
@@ -263,6 +277,13 @@ export function buildPlanPrompt(input: DesignPlanRequest): { system: string; use
       "Keep the plan practical for a working florist.",
       "Required JSON keys: title, description, meaningText, reasoning, steps, imagePrompt, estimatedCost, flowerList.",
       "flowerList items require flowerName, count, and reason.",
+      "",
+      "IMAGE PROMPT RULES (imagePrompt MUST be written in English for high-fidelity rendering):",
+      "Format imagePrompt with modular blocks [SUBJECT & STEMS], [STYLE], [COMPOSITION], [LIGHTING & DEPTH], [VESSEL & BACKDROP], [CONSTRAINTS].",
+      "1. [SUBJECT & STEMS]: State the exact stem count and flower names from flowerList (e.g. 'Exactly 12 stems in total: 5 Pink Roses, 4 White Lilies... Countable distinct blooms, no extra flowers').",
+      `2. ${styleGuidance}`,
+      "3. [CONSTRAINTS]: 'No artificial plastic flowers, no deformed petals, no blurry stem chaos, no watermark, no CGI oversaturation.'",
+      "Keep total imagePrompt between 400 and 1200 characters in English.",
     ].join("\n"),
     user: [
       `Design request JSON:\n${JSON.stringify(input.request)}`,
